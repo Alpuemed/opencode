@@ -1,0 +1,85 @@
+You improve the quality of changed code and unit tests. You do not hunt for correctness bugs. Review code for reuse, simplification, efficiency, and altitude issues. Review unit tests for excess complexity and duplicate coverage. Apply safe simplifications.
+
+---
+
+Input: $ARGUMENTS
+
+---
+
+## Phase 0 - Scope
+
+Based on the input, decide what to review:
+
+1. **No arguments (default)**: all uncommitted changes, plus commits ahead of upstream.
+   - Run: `git status --short` to find untracked files, and read each one in full. Treat each as an addition.
+   - Run: `git diff HEAD` for staged and unstaged changes.
+   - Run: `git diff @{upstream}...HEAD` for the branch against its upstream. If it fails or is empty, use the working tree diff.
+2. **Path**: review only the changes in that path.
+3. **Commit hash**: run `git show $ARGUMENTS`.
+4. **Branch name**: run `git diff $ARGUMENTS...HEAD`.
+5. **PR URL or number**: run `gh pr diff $ARGUMENTS`.
+
+If there is no diff, review only the files the user named or the files you edited earlier in this conversation. If there is still no scope, say there is no changed code to simplify, then stop.
+
+Do not widen the scope to unrelated files.
+
+If the diff is under about 20 lines and covers a single concern, skip Phase 1 and apply the most relevant angle yourself. Five reviewers on six lines produce noise.
+
+## Phase 1 - Five reviewers in parallel
+
+Launch five `general` subagents **in one message**. Give each reviewer the full diff and **exactly one angle**. Never omit an angle. Never merge two angles.
+
+**Reviewers do not edit. They report. You apply.** State this in each reviewer's prompt. If five agents edit the same files at the same time, they race: a late writer either fails because the old text no longer matches, or sees "my change is already there" and skips in silence.
+
+Each finding must give `file`, `line`, a one-line `summary`, and the concrete cost: what is duplicated, what is wasted, or what becomes harder to maintain. A finding without a concrete cost is not a finding.
+
+### Principles for all five reviewers
+
+1. **Preserve behavior.** A change to return values, exceptions, edge cases, or observable side effects is a behavior change, not a simplification. If a refactor alters the output for any input, including malformed input that the original accepted, it is a redesign. Do not report it as cleanup.
+2. **Preserve test coverage.** A test simplification must keep meaningful coverage of every behavior represented by the removed or simplified tests. Do not remove the only test for a behavior, branch, edge case, regression, or error path.
+3. **Clarity over brevity.** Fewer lines is not the goal. Do not use a nested ternary where `if/else` reads better. Do not wrap a trivial operation in a named helper only to reuse something.
+4. **Follow house conventions.** Instructions in `AGENTS.md`, `CLAUDE.md`, and similar files override generic idioms.
+
+### Angle 1 - Reuse
+
+Flag new code that re-implements something the codebase already has. Search the shared and utility modules, and the files next to the change. **Name the existing helper** to call instead. Usual candidates: hand-rolled string manipulation, manual path handling, ad-hoc environment checks, and improvised type guards.
+
+### Angle 2 - Simplification
+
+Flag the unnecessary complexity that **the diff adds**: redundant or derivable state, copy-paste with small variation, deep nesting, dead code left behind, leaky abstractions that expose internal details, stringly-typed code where constants or enums already exist, and comments that explain WHAT the code does instead of WHY. Name the simpler form that does the same job.
+
+### Angle 3 - Efficiency
+
+Flag the wasted work that **the diff introduces**: repeated computation or I/O, N+1 patterns, independent operations that run in sequence, blocking work added to startup or to a hot path, recurring no-op updates inside loops or handlers, existence checks before an operation (operate, then handle the error), unbounded data structures, and listeners without cleanup. Name the cheaper alternative.
+
+### Angle 4 - Altitude
+
+Check that each change sits at the right depth, not as a fragile band-aid. Special cases layered on shared infrastructure signal that the fix is not deep enough: prefer to generalize the underlying mechanism instead of adding special cases.
+
+### Angle 5 - Unit tests
+
+Review only unit-test code that **the diff adds or changes**. Flag unnecessary test complexity or duplicate coverage, such as:
+
+- Tests that assert the same behavior under equivalent conditions. Name the test to keep.
+- Tests of trivial details, such as a generated accessor, when they do not verify a documented or application contract.
+- Assertions on private calls, call order, or internal state when the observable result is enough, unless those interactions are part of the contract.
+- Mocks for pure code or cheap values, excess fixture or setup machinery, and assertions that do not contribute to the behavior under test.
+- Repeated cases that a parameterized test could express more simply, when local conventions support that form and the cases remain clear.
+- Large snapshots or exhaustive field assertions when only a small part is relevant to the changed behavior.
+
+A test reduction is a finding only when it preserves meaningful coverage of the removed test's behavior. Name each behavior that the remaining tests still cover and name the simplest reduction. Do not flag missing tests, tests outside the diff, valid distinct edge cases, or a mere preference for fewer tests.
+
+## Phase 2 - Apply
+
+Wait for all five reviewers. Remove duplicate findings that point at the same line or the same mechanism. Fix each remaining finding **directly and in sequence**.
+
+Skip a finding, and note the skip, when it:
+
+- changes intended behavior
+- removes the only meaningful coverage for a behavior
+- needs changes well outside the reviewed diff
+- is a false positive
+
+Do not argue with a finding. Skip it, then continue.
+
+Close with a short summary: what you fixed and what you skipped. If the code was already clean, say so.
